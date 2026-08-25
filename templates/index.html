@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Atlas Qt</title>
+  <link rel="stylesheet" href="/static/atlas.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="orb"></span><strong>Atlas</strong><span class="lab">Qt</span></div>
+      <button class="side-button active" data-panel="home">⌂ <span>New page</span></button>
+      <button class="side-button" data-panel="bookmarks">★ <span>Bookmarks</span></button>
+      <button class="side-button" data-panel="history">◷ <span>History</span></button>
+      <button class="side-button" data-panel="bulldog">🐶 <span>Bulldog</span></button>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-note">Now powered by Chromium through Qt WebEngine.</div>
+    </aside>
+
+    <main class="workspace">
+      <section id="home" class="panel active-panel">
+        <div class="hero">
+          <div class="hero-orb"></div>
+          <h1>Where shall we wander?</h1>
+          <form class="hero-search" action="/browse" method="get">
+            <input name="url" placeholder="Search the web or enter a URL" autocomplete="off" autofocus>
+            <button type="submit">→</button>
+          </form>
+          <div class="quick-links">
+            <a href="https://wikipedia.org">Wikipedia</a>
+            <a href="https://archive.org">Internet Archive</a>
+            <a href="https://news.ycombinator.com">Hacker News</a>
+            <a href="/bulldog">🐶 Bulldog Cache</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="bookmarks" class="panel">
+        <div class="panel-heading"><div><h1>Bookmarks</h1><p>Your locally saved pages.</p></div></div>
+        <div id="bookmark-list" class="card-list"></div>
+      </section>
+
+      <section id="history" class="panel">
+        <div class="panel-heading">
+          <div><h1>History</h1><p>Pages visited in Atlas Qt.</p></div>
+          <button class="danger" id="clear-history">Clear history</button>
+        </div>
+        <div id="history-list" class="card-list"></div>
+      </section>
+
+      <section id="bulldog" class="panel">
+        <div class="panel-heading">
+          <div>
+            <h1>🐶 Bulldog</h1>
+            <p>Sanitize a live page, store it locally, and browse cached destinations as green links.</p>
+          </div>
+          <a class="button" href="/bulldog">Open cache index</a>
+        </div>
+
+        <div class="hero" style="min-height:auto; padding-top:2rem;">
+          <form class="hero-search" action="/bulldog/process" method="get">
+            <input name="url"
+                   placeholder="Enter a page to sanitize with Bulldog"
+                   autocomplete="off">
+            <button type="submit" title="Process with Bulldog">🐶</button>
+          </form>
+          <div class="quick-links">
+            <a href="/bulldog">Cached pages</a>
+            <a href="/api/bulldog/status">Cache status</a>
+          </div>
+          <p style="max-width:46rem; margin-top:1.5rem;">
+            <strong>Green</strong> links point to pages already sanitized and stored by Bulldog.
+            <strong>Red</strong> links still point to the live web and can be explicitly processed.
+          </p>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/atlas.js"></script>
+</body>
+</html>
