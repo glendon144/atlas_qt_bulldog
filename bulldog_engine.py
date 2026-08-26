@@ -74,6 +74,38 @@ body { font-family: Georgia, serif; max-width: 980px; margin: 1.5em auto;
 a.green-link { color: #087a20; font-weight: bold; }
 a.red-link { color: #a31414; }
 a.process-link { color: #555; font-size: 80%; text-decoration: none; }
+
+form.process-link {
+    display: inline;
+}
+
+form.process-link button {
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    color: #555;
+    font: inherit;
+    font-size: 80%;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.bulldog-bar form {
+    display: inline;
+    margin-right: 1em;
+}
+
+.bulldog-bar button {
+    background: none;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
 .bulldog-bar { border: 1px solid #777; background: #eee8d5; padding: .65em;
                margin-bottom: 1em; font-family: sans-serif; font-size: 90%; }
 .bulldog-bar a { margin-right: 1em; }
