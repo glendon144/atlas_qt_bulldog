@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import html
+import hmac
+import os
+import secrets
 import sqlite3
 import sys
-import urllib.parse
 import urllib.error
 from datetime import datetime, timezone
 from multiprocessing import freeze_support
@@ -15,7 +17,7 @@ from flask import Flask, g, jsonify, redirect, render_template, request
 from bulldog_engine import (
     BulldogDB,
     CacheLinkRenderer,
-    canonicalize_url,
+    FetchPolicy,
     process_url,
     wrap_document,
 )
@@ -26,6 +28,12 @@ BULLDOG_DB_PATH = APP_DIR / "bulldog.sqlite3"
 
 app = Flask(__name__)
 app.config["JSON_SORT_KEYS"] = False
+app.config["SECRET_KEY"] = os.environ.get("ATLAS_SECRET_KEY") or secrets.token_hex(32)
+
+HOST = os.environ.get("ATLAS_HOST", "127.0.0.1")
+REMOTE_AUTH_TOKEN = os.environ.get("BULLDOG_REMOTE_AUTH_TOKEN", "")
+FETCH_POLICY = FetchPolicy.from_environment()
+_CSRF_TOKEN = secrets.token_urlsafe(32)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS history (
@@ -90,6 +98,39 @@ def normalize_url(value: str) -> str:
     if "." in value and " " not in value:
         return "https://" + value
     return "https://www.google.com/search?q=" + quote(value)
+
+
+def _is_loopback_bind(host: str) -> bool:
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+if not _is_loopback_bind(HOST) and not REMOTE_AUTH_TOKEN:
+    raise RuntimeError("non-loopback binding requires BULLDOG_REMOTE_AUTH_TOKEN")
+
+
+def _request_token() -> str:
+    return request.headers.get("X-Bulldog-CSRF", "") or request.form.get("csrf_token", "")
+
+
+def _authorized_mutation() -> bool:
+    if not hmac.compare_digest(_request_token(), _CSRF_TOKEN):
+        return False
+    if not _is_loopback_bind(HOST):
+        supplied = request.headers.get("Authorization", "")
+        supplied = supplied.removeprefix("Bearer ").strip()
+        supplied = supplied or request.form.get("remote_token", "")
+        if not REMOTE_AUTH_TOKEN or not hmac.compare_digest(supplied, REMOTE_AUTH_TOKEN):
+            return False
+    return True
+
+
+def _mutation_denied():
+    return jsonify({"ok": False, "error": "authorized Bulldog command required"}), 403
+
+
+@app.context_processor
+def bulldog_security_context():
+    return {"bulldog_csrf_token": _CSRF_TOKEN, "bulldog_remote_token": REMOTE_AUTH_TOKEN}
 
 
 @app.get("/")
@@ -193,7 +234,9 @@ def bulldog_index():
     <h1>Bulldog Cache</h1>
     <p>Integrated into Atlas Qt. Green links are sanitized cached pages;
        red links point to the live web.</p>
-    <form action="/bulldog/process" method="get">
+    <form action="/bulldog/process" method="post">
+      <input type="hidden" name="csrf_token" value="{html.escape(_CSRF_TOKEN)}">
+      <input type="hidden" name="remote_token" value="{html.escape(REMOTE_AUTH_TOKEN)}">
       <label>Process URL:
         <input name="url" size="70" placeholder="https://example.com/">
       </label>
@@ -216,32 +259,37 @@ def bulldog_page(page_id: int):
     if not row:
         return wrap_document("<h1>Not found</h1>", "Bulldog"), 404
 
-    renderer = CacheLinkRenderer(db)
+    renderer = CacheLinkRenderer(db, csrf_token=_CSRF_TOKEN, remote_token=REMOTE_AUTH_TOKEN)
     renderer.feed(row["sanitized_html"])
     renderer.close()
 
-    update_q = urllib.parse.urlencode({"url": row["url"]})
     toolbar = (
         '<div class="bulldog-bar"><strong>🐶 Bulldog sanitized cache</strong> &nbsp; '
         '<a href="/">Atlas Home</a>'
         '<a href="/bulldog">Bulldog Cache</a>'
-        f'<a href="/bulldog/update?{update_q}">Update this page</a>'
+        f'<form method="post" action="/bulldog/update" style="display:inline">'
+        f'<input type="hidden" name="url" value="{html.escape(row["url"], quote=True)}">'
+        f'<input type="hidden" name="csrf_token" value="{html.escape(_CSRF_TOKEN)}">'
+        f'<input type="hidden" name="remote_token" value="{html.escape(REMOTE_AUTH_TOKEN)}">'
+        f'<button type="submit">Update this page</button></form>'
         f'<span class="bulldog-source">Source: {html.escape(row["url"])}</span>'
         '</div>'
     )
     return wrap_document(renderer.result(), row["title"] or row["url"], toolbar)
 
 
-@app.get("/bulldog/process")
+@app.post("/bulldog/process")
 def bulldog_process():
-    raw_url = request.args.get("url", "")
+    if not _authorized_mutation():
+        return _mutation_denied()
+    raw_url = request.form.get("url", "") or request.args.get("url", "")
     try:
-        url = canonicalize_url(raw_url)
+        url = FETCH_POLICY.validate(raw_url)
         db = get_bulldog_db()
         existing = db.get_by_url(url)
         if existing:
             return redirect(f'/bulldog/page/{existing["id"]}')
-        page_id = process_url(db, url)
+        page_id = process_url(db, url, FETCH_POLICY)
         return redirect(f"/bulldog/page/{page_id}")
     except urllib.error.URLError as exc:
         return wrap_document(
@@ -255,12 +303,14 @@ def bulldog_process():
         ), 400
 
 
-@app.get("/bulldog/update")
+@app.post("/bulldog/update")
 def bulldog_update():
-    raw_url = request.args.get("url", "")
+    if not _authorized_mutation():
+        return _mutation_denied()
+    raw_url = request.form.get("url", "") or request.args.get("url", "")
     try:
-        url = canonicalize_url(raw_url)
-        page_id = process_url(get_bulldog_db(), url)
+        url = FETCH_POLICY.validate(raw_url)
+        page_id = process_url(get_bulldog_db(), url, FETCH_POLICY)
         return redirect(f"/bulldog/page/{page_id}")
     except Exception as exc:
         return wrap_document(
@@ -283,13 +333,15 @@ def bulldog_status():
 
 @app.post("/api/bulldog/process")
 def bulldog_process_api():
+    if not _authorized_mutation():
+        return _mutation_denied()
     data = request.get_json(silent=True) or {}
     raw_url = str(data.get("url", "")).strip()
     try:
-        url = canonicalize_url(raw_url)
+        url = FETCH_POLICY.validate(raw_url)
         db = get_bulldog_db()
         existing = db.get_by_url(url)
-        page_id = int(existing["id"]) if existing else process_url(db, url)
+        page_id = int(existing["id"]) if existing else process_url(db, url, FETCH_POLICY)
         row = db.get_by_id(page_id)
         return jsonify({
             "ok": True,
@@ -308,7 +360,7 @@ if __name__ == "__main__":
     init_db()
     frozen = getattr(sys, "frozen", False)
     app.run(
-        host="127.0.0.1",
+        host=HOST,
         port=5055,
         debug=not frozen,
         use_reloader=not frozen,

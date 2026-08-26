@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import fnmatch
 import html
+import os
 import sqlite3
 import time
 import urllib.parse
@@ -40,6 +42,31 @@ TAG_ALLOWED_ATTRS = {
     "table": {"summary"},
 }
 HTTP_SCHEMES = {"http", "https"}
+
+
+class FetchPolicy:
+    """Destination policy; local/private URLs remain allowed by default."""
+
+    def __init__(self, allowed_hosts: Optional[list[str]] = None):
+        self.allowed_hosts = [h.strip().lower() for h in (allowed_hosts or []) if h.strip()]
+
+    @classmethod
+    def from_environment(cls) -> "FetchPolicy":
+        raw = os.environ.get("BULLDOG_ALLOWED_HOSTS", "")
+        return cls(raw.split(",") if raw else None)
+
+    def allows(self, url: str) -> bool:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower()
+        # Empty policy means the desktop default: public and intentionally local URLs.
+        return not self.allowed_hosts or any(
+            fnmatch.fnmatchcase(host, pattern) for pattern in self.allowed_hosts
+        )
+
+    def validate(self, url: str) -> str:
+        canonical = canonicalize_url(url)
+        if not self.allows(canonical):
+            raise ValueError(f"fetch destination is not allowed by policy: {canonical}")
+        return canonical
 
 CSS = """
 body { font-family: Georgia, serif; max-width: 980px; margin: 1.5em auto;
@@ -208,9 +235,11 @@ class Sanitizer(HTMLParser):
 class CacheLinkRenderer(HTMLParser):
     """Render sanitized HTML using Atlas routes rather than a second Bulldog server."""
 
-    def __init__(self, db: BulldogDB):
+    def __init__(self, db: BulldogDB, csrf_token: str = "", remote_token: str = ""):
         super().__init__(convert_charrefs=True)
         self.db = db
+        self.csrf_token = csrf_token
+        self.remote_token = remote_token
         self.out: list[str] = []
         self.pending_process: list[Optional[str]] = []
 
@@ -247,8 +276,15 @@ class CacheLinkRenderer(HTMLParser):
         if tag == "a" and self.pending_process:
             q = self.pending_process.pop()
             if q:
+                url = html.escape(urllib.parse.unquote(q.split("=", 1)[1]), quote=True)
+                csrf = html.escape(self.csrf_token, quote=True)
+                remote = html.escape(self.remote_token, quote=True)
                 self.out.append(
-                    f' <a class="process-link" href="/bulldog/process?{q}">[process]</a>'
+                    ' <form class="process-link" method="post" action="/bulldog/process" '
+                    'style="display:inline"><input type="hidden" name="url" value="%s">'
+                    '<input type="hidden" name="csrf_token" value="%s">'
+                    '<input type="hidden" name="remote_token" value="%s">'
+                    '<button type="submit">[process]</button></form>' % (url, csrf, remote)
                 )
 
     def handle_data(self, data):
@@ -257,14 +293,26 @@ class CacheLinkRenderer(HTMLParser):
     def result(self) -> str:
         return "".join(self.out)
 
-def fetch_page(url: str) -> tuple[str, str]:
-    canonical = canonicalize_url(url)
+class PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, policy: FetchPolicy):
+        super().__init__()
+        self.policy = policy
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = self.policy.validate(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, target)
+
+
+def fetch_page(url: str, policy: Optional[FetchPolicy] = None) -> tuple[str, str]:
+    policy = policy or FetchPolicy.from_environment()
+    canonical = policy.validate(url)
     req = urllib.request.Request(canonical, headers={
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
     })
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        final_url = canonicalize_url(resp.geturl())
+    opener = urllib.request.build_opener(PolicyRedirectHandler(policy))
+    with opener.open(req, timeout=20) as resp:
+        final_url = policy.validate(resp.geturl())
         content_type = resp.headers.get_content_type()
         if content_type not in ("text/html", "application/xhtml+xml"):
             raise ValueError(f"not an HTML page: {content_type}")
@@ -278,8 +326,8 @@ def fetch_page(url: str) -> tuple[str, str]:
             text = raw.decode("utf-8", "replace")
     return final_url, text
 
-def process_url(db: BulldogDB, url: str) -> int:
-    final_url, source = fetch_page(url)
+def process_url(db: BulldogDB, url: str, policy: Optional[FetchPolicy] = None) -> int:
+    final_url, source = fetch_page(url, policy)
     parser = Sanitizer(final_url)
     parser.feed(source)
     parser.close()
