@@ -74,6 +74,27 @@ class BulldogHardeningTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.location, "/bulldog/page/7")
 
+    def test_cache_index_process_form_contains_working_authorization(self):
+        with patch.object(atlas.BulldogDB, "list_recent", return_value=[]):
+            response = self.client.get("/bulldog")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            f'name="csrf_token" value="{atlas._CSRF_TOKEN}"'.encode(),
+            response.data,
+        )
+        self.assertNotIn(b"{html.escape(_CSRF_TOKEN)}", response.data)
+
+        with patch.object(atlas, "process_url", return_value=7), patch.object(
+            atlas.BulldogDB, "get_by_url", return_value=None
+        ):
+            response = self.client.post(
+                "/bulldog/process",
+                data={"url": "http://localhost/live", **self.token()},
+            )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/bulldog/page/7")
+
     def test_fetch_command_requires_csrf_token(self):
         response = self.client.post("/api/bulldog/process", json={"url": "http://localhost/"})
         self.assertEqual(response.status_code, 403)

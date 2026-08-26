@@ -30,9 +30,9 @@ next to `app.py`.
 ### Routes
 
 - `/bulldog` — cache index
-- `/bulldog/process?url=https://...` — sanitize/cache a page
+- `POST /bulldog/process` with form field `url` — sanitize/cache a page
 - `/bulldog/page/<id>` — display sanitized cached page
-- `/bulldog/update?url=https://...` — refresh cached page
+- `POST /bulldog/update` with form field `url` — refresh cached page
 - `/api/bulldog/status` — JSON cache status
 - `POST /api/bulldog/process` with `{"url":"https://..."}` — API for future Qt/JS toolbar integration
 
@@ -62,6 +62,22 @@ Process a harmless public URL. Then click an uncached red link's `[process]` act
 ## Next UI step
 
 The backend deliberately includes `POST /api/bulldog/process`. Once the Qt/browser-side source or `templates/index.html` is available, a toolbar button can send the current URL there and navigate the current tab to the returned `atlas_url`.
+
+## Fetch authorization and policy
+
+Bulldog intentionally permits localhost, private LAN, Tailscale/overlay, and
+public HTTP(S) destinations by default. The protection boundary is who may
+command a fetch: mutation routes require the per-process CSRF token rendered in
+Atlas forms (or `X-Bulldog-CSRF` for an extension/API client).
+
+For a stricter deployment, set `BULLDOG_ALLOWED_HOSTS` to comma-separated host
+patterns such as `localhost,*.atlas.local`. The policy is checked for the
+original URL and every redirect.
+
+Atlas binds to `127.0.0.1` by default. If `ATLAS_HOST` is set to a non-loopback
+address, startup requires `BULLDOG_REMOTE_AUTH_TOKEN`; remote mutation clients
+must then also send `Authorization: Bearer <token>`. This is in addition to
+the CSRF token and does not change the default local desktop workflow.
 
 ## Security note
 

@@ -230,13 +230,13 @@ def bulldog_index():
             f'<small>{html.escape(row["url"])}</small></li>'
         )
 
-    body = """
+    body = f"""
     <h1>Bulldog Cache</h1>
     <p>Integrated into Atlas Qt. Green links are sanitized cached pages;
        red links point to the live web.</p>
     <form action="/bulldog/process" method="post">
-      <input type="hidden" name="csrf_token" value="{html.escape(_CSRF_TOKEN)}">
-      <input type="hidden" name="remote_token" value="{html.escape(REMOTE_AUTH_TOKEN)}">
+      <input type="hidden" name="csrf_token" value="{html.escape(_CSRF_TOKEN, quote=True)}">
+      <input type="hidden" name="remote_token" value="{html.escape(REMOTE_AUTH_TOKEN, quote=True)}">
       <label>Process URL:
         <input name="url" size="70" placeholder="https://example.com/">
       </label>

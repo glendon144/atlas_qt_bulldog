@@ -59,7 +59,9 @@
         </div>
 
         <div class="hero" style="min-height:auto; padding-top:2rem;">
-          <form class="hero-search" action="/bulldog/process" method="get">
+          <form class="hero-search" action="/bulldog/process" method="post">
+            <input type="hidden" name="csrf_token" value="{{ bulldog_csrf_token }}">
+            <input type="hidden" name="remote_token" value="{{ bulldog_remote_token }}">
             <input name="url"
                    placeholder="Enter a page to sanitize with Bulldog"
                    autocomplete="off">
